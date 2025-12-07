@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CFOP 修复版 (v9.2)</title>
+    <title>CFOP 全能训练版 (v10.0)</title>
     <style>
         /* === 基础样式 === */
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background: #f5f5f7; color: #333; }
@@ -80,16 +80,17 @@
         
         /* 公式输入框 */
         .alg-input {
-            width: 100%; 
-            height: 50px; 
+            width: 100%; height: 50px; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            font-size: 13px; 
-            font-weight: 500; color: #004085;
+            font-size: 13px; font-weight: 500; color: #004085;
             border: 1px solid #eee; background: #fafafa; border-radius: 6px; padding: 4px;
             text-align: center; letter-spacing: 0.5px;
             resize: none; overflow: hidden; line-height: 1.3;
         }
         .alg-input:focus { background: white; border-color: #007aff; outline: none; }
+
+        /* 类型标签 (OLL/PLL) */
+        .type-tag { font-size: 10px; color: #999; text-transform: uppercase; margin-bottom: 2px; }
 
         /* 背诵页 */
         #page-quiz { display: none; min-height: 85vh; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
@@ -140,7 +141,7 @@
 <body>
 
     <div class="navbar">
-        <div style="font-weight:bold; color:#007aff; font-size:18px;">CFOP V9.2</div>
+        <div style="font-weight:bold; color:#007aff; font-size:18px;">CFOP V10</div>
         <div class="nav-center">
             <button id="nav-1" class="nav-btn active" onclick="switchPage(1)">整理</button>
             <button id="nav-2" class="nav-btn" onclick="switchPage(2)">背诵</button>
@@ -184,21 +185,69 @@
                 <button class="btn-act" style="background:#34c759" onclick="nextCard()">➡️ 下一个</button>
             </div>
         </div>
-        <p style="color:#999; font-size:12px; margin-top:20px;">(含随机旋转)</p>
+        <p style="color:#999; font-size:12px; margin-top:20px;">(OLL/PLL 混合训练)</p>
     </div>
 
     <script>
-        const baseDb = Array.from({length: 57}, (_, i) => ({ id: i+1, alg: "" }));
+        // === 1. 初始化数据构建 ===
+        // OLL 1-57 (数字ID)
+        const ollDb = Array.from({length: 57}, (_, i) => ({ id: i+1, type: 'OLL' }));
+        // PLL 1-21 (字符串ID "pll1" - "pll21")
+        const pllDb = Array.from({length: 21}, (_, i) => ({ id: "pll" + (i+1), type: 'PLL' }));
+        
+        // 合并数据库
+        const fullDb = [...ollDb, ...pllDb];
+
         let groups = [], algs = {}, currentSelectedIds = [], dragSrcId = null, dragSrcGroupId = null;
 
         function init() {
             try {
+                // 读取旧数据 (key不变，保证升级后数据不丢)
                 algs = JSON.parse(localStorage.getItem('cfop_algs_v7')) || {};
                 const savedGroups = localStorage.getItem('cfop_groups_v7');
-                if (savedGroups) groups = JSON.parse(savedGroups);
-                else groups = [{ id: "default", name: "未分组", items: baseDb.map(x => x.id) }];
-            } catch(e) {}
+                
+                if (savedGroups) {
+                    groups = JSON.parse(savedGroups);
+                    // 【智能升级逻辑】
+                    // 检查是否有新的 PLL 还没在任何组里
+                    // 获取当前所有在组里的ID
+                    const allGroupedIds = new Set();
+                    groups.forEach(g => g.items.forEach(id => allGroupedIds.add(id)));
+                    
+                    // 找出缺少的ID (即新加的 PLL)
+                    const missingIds = fullDb.filter(x => !allGroupedIds.has(x.id)).map(x => x.id);
+                    
+                    if (missingIds.length > 0) {
+                        // 找到默认组，把缺少的加进去
+                        let defGroup = groups.find(g => g.id === 'default');
+                        if (!defGroup) {
+                            defGroup = { id: "default", name: "未分组", items: [] };
+                            groups.push(defGroup);
+                        }
+                        defGroup.items.push(...missingIds);
+                        // 保存更新
+                        saveData();
+                    }
+                } else {
+                    // 第一次使用
+                    groups = [{ id: "default", name: "未分组", items: fullDb.map(x => x.id) }];
+                }
+            } catch(e) { console.error(e); }
             renderAll();
+        }
+
+        // 辅助：获取显示名称
+        function getDisplayName(id) {
+            const strId = String(id);
+            if (strId.startsWith("pll")) {
+                return "PLL " + strId.replace("pll", "");
+            }
+            return "OLL " + id;
+        }
+
+        // 辅助：获取图片文件名
+        function getImgName(id) {
+            return id + ".png"; // 1.png 或 pll1.png
         }
 
         function renderAll() {
@@ -245,10 +294,13 @@
                         itemDiv.ondrop = (e) => { e.stopPropagation(); handleDropOnItem(e, itemId, group.id); };
 
                         const showAlg = algs[itemId] || "";
+                        const showName = getDisplayName(itemId);
+                        const imgFile = getImgName(itemId);
+
                         itemDiv.innerHTML = `
-                            <div onclick="toggleSelect(${itemId})"><img src="${itemId}.png" onerror="this.src='//via.placeholder.com/100?text=${itemId}'"></div>
-                            <textarea class="alg-input" onchange="saveAlg(${itemId}, this.value)" placeholder="公式">${showAlg}</textarea>
-                            <div style="font-size:10px;color:#999;">#${itemId}</div>
+                            <div onclick="toggleSelect('${itemId}')"><img src="${imgFile}" onerror="this.src='//via.placeholder.com/100?text=${itemId}'"></div>
+                            <textarea class="alg-input" onchange="saveAlg('${itemId}', this.value)" placeholder="公式">${showAlg}</textarea>
+                            <div class="type-tag">${showName}</div>
                         `;
                         grid.appendChild(itemDiv);
                     });
@@ -268,8 +320,12 @@
         function moveItemLogic(itemId, srcGroupId, targetItemId, targetGroupId) {
             const srcGroup = groups.find(g => g.id === srcGroupId);
             const targetGroup = groups.find(g => g.id === targetGroupId);
-            srcGroup.items = srcGroup.items.filter(x => x !== itemId);
-            if (targetItemId) { const idx = targetGroup.items.indexOf(targetItemId); targetGroup.items.splice(idx, 0, itemId); }
+            // 兼容数字和字符串ID比较
+            srcGroup.items = srcGroup.items.filter(x => String(x) !== String(itemId));
+            if (targetItemId) { 
+                const idx = targetGroup.items.findIndex(x => String(x) === String(targetItemId));
+                targetGroup.items.splice(idx, 0, itemId); 
+            }
             else { targetGroup.items.push(itemId); }
             saveData(); renderAll();
         }
@@ -280,9 +336,16 @@
         
         function moveSelectedToNewGroup() { if(!currentSelectedIds.length) return alert("请先勾选"); const n=prompt("新分组名："); if(!n) return; groups.forEach(g=>g.items=g.items.filter(id=>!currentSelectedIds.includes(id))); groups.unshift({id:"g_"+Date.now(), name:n, items:[...currentSelectedIds]}); currentSelectedIds=[]; saveData(); renderAll(); }
         
-        function moveSelectedToDefault() { if(!currentSelectedIds.length) return alert("请勾选"); groups.forEach(g=>{if(g.id!=='default')g.items=g.items.filter(id=>!currentSelectedIds.includes(id))}); const d=groups.find(g=>g.id==='default'); d.items=[...new Set([...d.items,...currentSelectedIds])].sort((a,b)=>a-b); currentSelectedIds=[]; saveData(); renderAll(); }
+        function moveSelectedToDefault() { if(!currentSelectedIds.length) return alert("请勾选"); groups.forEach(g=>{if(g.id!=='default')g.items=g.items.filter(id=>!currentSelectedIds.includes(id))}); const d=groups.find(g=>g.id==='default'); d.items=[...new Set([...d.items,...currentSelectedIds])]; currentSelectedIds=[]; saveData(); renderAll(); }
         
-        function toggleSelect(id) { if(currentSelectedIds.includes(id)) currentSelectedIds=currentSelectedIds.filter(x=>x!==id); else currentSelectedIds.push(id); renderAll(); }
+        function toggleSelect(id) { 
+            // 统一转字符串比较，防止类型不匹配
+            if(currentSelectedIds.some(x => String(x) === String(id))) 
+                currentSelectedIds = currentSelectedIds.filter(x => String(x) !== String(id));
+            else 
+                currentSelectedIds.push(id); 
+            renderAll(); 
+        }
         function toggleGroupSelect(gid) {
             const g = groups.find(x => x.id === gid); if(!g) return;
             const isAll = g.items.length > 0 && g.items.every(id => currentSelectedIds.includes(id));
@@ -293,10 +356,9 @@
         function clearSelection() { currentSelectedIds=[]; renderAll(); }
         function selectAllInGroup(gid) { const g=groups.find(x=>x.id===gid); if(g){currentSelectedIds=[...new Set([...currentSelectedIds,...g.items])]; renderAll();} }
         function renameGroup(id) { if(id==='default')return; const g=groups.find(x=>x.id===id); const v=prompt("修改名称",g.name); if(v){g.name=v;saveData();renderAll();} }
-        function deleteGroup(id) { if(!confirm("确定删除？"))return; const g=groups.find(x=>x.id===id); const d=groups.find(x=>x.id==='default'); d.items=[...new Set([...d.items,...g.items])].sort((a,b)=>a-b); groups=groups.filter(x=>x.id!==id); saveData(); renderAll(); }
+        function deleteGroup(id) { if(!confirm("确定删除？"))return; const g=groups.find(x=>x.id===id); const d=groups.find(x=>x.id==='default'); d.items=[...new Set([...d.items,...g.items])]; groups=groups.filter(x=>x.id!==id); saveData(); renderAll(); }
         
-        // 备份逻辑
-        function exportData() { const b=new Blob([JSON.stringify({version:"9.2", date:new Date().toLocaleString(), groups, algs},null,2)],{type:"application/json"}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download="CFOP_Backup.json"; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+        function exportData() { const b=new Blob([JSON.stringify({version:"10.0", date:new Date().toLocaleString(), groups, algs},null,2)],{type:"application/json"}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download="CFOP_Backup.json"; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
         function importData(input) { 
             const f=input.files[0]; if(!f)return; 
             const r=new FileReader(); 
@@ -306,9 +368,8 @@
                     if(d.groups){
                         if(confirm("恢复数据？")){
                             groups=d.groups; 
-                            algs=d.algs || {}; // 兼容旧版
-                            saveData(); // 保存分组
-                            // 强制保存公式到 localStorage (修复bug的核心)
+                            algs=d.algs || {}; 
+                            saveData(); 
                             localStorage.setItem('cfop_algs_v7', JSON.stringify(algs));
                             renderAll();
                             alert("完成");
@@ -330,12 +391,16 @@
             const randId = currentSelectedIds[Math.floor(Math.random() * currentSelectedIds.length)];
             const alg = algs[randId] || "未设置公式";
             const img = document.getElementById('q-img');
-            img.style.transition = 'none'; img.style.transform = 'rotate(0deg)'; img.src = randId + ".png"; void img.offsetWidth;
+            img.style.transition = 'none'; img.style.transform = 'rotate(0deg)'; 
+            img.src = getImgName(randId); 
+            void img.offsetWidth;
             const deg = Math.floor(Math.random() * 4) * 90;
             img.style.transform = `rotate(${deg}deg)`;
-            document.getElementById('q-title').innerText = `OLL ${randId}` + (deg?` (转${deg}°)`:'');
+            
+            const dispName = getDisplayName(randId);
+            document.getElementById('q-title').innerText = `${dispName}` + (deg?` (转${deg}°)`:'');
             document.getElementById('q-alg').innerText = alg;
-            document.getElementById('ans-origin-img').src = randId + ".png";
+            document.getElementById('ans-origin-img').src = getImgName(randId);
         }
         function showAns() { document.getElementById('ans-area').style.display = 'block'; }
 
